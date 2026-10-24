@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Watch</title>
+<link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
+<style>
+  /* Defaults; applySky() overrides these every few seconds to match the time of day */
+  :root {
+    --bgt: #3d9be9; --bgb: #a8d8fb;
+    --hand: #0a1c3a; --num: #0a1c3a;
+    --tick: #1d4170; --tick2: rgba(10, 28, 58, .35);
+    --pill: #fff; --pill-text: #0a1c3a; --hub: #eaf4ff;
+    --red: #e8302a;
+  }
+  html, body {
+    height: 100%; margin: 0; overflow: hidden;
+    background: linear-gradient(var(--bgt), var(--bgb));
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #face { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .num {
+    font-family: "Michroma", "Arial Black", sans-serif;
+    fill: var(--num); text-anchor: middle; dominant-baseline: central;
+  }
+  #date {
+    position: fixed;
+    right: calc(env(safe-area-inset-right, 0px) + 20px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 30px);
+    padding: 16px; border-radius: 999px;
+    background: var(--pill); color: var(--pill-text);
+    font-weight: 500; font-size: 17px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+  }
+</style>
+</head>
+<body>
+<svg id="face" role="img" aria-label="Analog clock">
+  <g id="ticks"></g>
+  <g id="nums"></g>
+
+  <!-- Hands are drawn pointing up from the pivot, then rotated as a group -->
+  <g id="hh"><line y1="52" y2="-146" stroke="var(--hand)" stroke-width="12" stroke-linecap="round"/></g>
+  <g id="mh"><line y1="52" y2="-220" stroke="var(--hand)" stroke-width="9" stroke-linecap="round"/></g>
+  <g id="sh">
+    <line y1="80" y2="-278" stroke="var(--red)" stroke-width="6" stroke-linecap="round"/>
+    <circle cy="80" r="12" fill="var(--red)"/>                                     <!-- tail -->
+    <circle r="12" fill="var(--hub)" stroke="var(--red)" stroke-width="3"/>        <!-- pivot ring -->
+    <circle r="5" fill="var(--red)"/>                                              <!-- pivot dot -->
+  </g>
+</svg>
+<div id="date"></div>
+
+<script>
+const NS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const root = document.documentElement.style;
+let cx = 0, cy = 0, s = 1;   // clock centre and scale (everything is sized relative to the screen)
+
+function svgEl(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  parent.appendChild(e);
+  return e;
+}
+
+/* ---------- Face: ticks and numerals ---------- */
+// Each tick sits where a ray from the centre hits an inset rectangle,
+// so the ticks follow the screen edge instead of a circle.
+function layout() {
+  const w = innerWidth, h = innerHeight;
+  cx = w / 2; cy = h / 2;
+  s = Math.min(w, h) / 708;
+  $("ticks").innerHTML = "";
+  $("nums").innerHTML = "";
+
+  const inset = 22 * s;
+  for (let i = 0; i < 60; i++) {
+    const major = i % 5 === 0;
+    const a = i * 6 * Math.PI / 180;
+    const dx = Math.sin(a), dy = -Math.cos(a);
+    const tx = Math.abs(dx) > 1e-9 ? (cx - inset) / Math.abs(dx) : Infinity;
+    const ty = Math.abs(dy) > 1e-9 ? (cy - inset) / Math.abs(dy) : Infinity;
+    const t = Math.min(tx, ty);                 // distance to the nearest edge
+    const len = (major ? 66 : 28) * s;
+    svgEl("line", {
+      x1: cx + dx * t,         y1: cy + dy * t,
+      x2: cx + dx * (t - len), y2: cy + dy * (t - len),
+      stroke: major ? "var(--tick)" : "var(--tick2)",
+      "stroke-width": (major ? 6 : 2) * s,
+      "stroke-linecap": "round"
+    }, $("ticks"));
+  }
+
+  const off = inset + 128 * s;                  // edge -> numeral centre
+  [["12", cx, off], ["3", w - off, cy], ["6", cx, h - off], ["9", off, cy]].forEach(([txt, x, y]) => {
+    svgEl("text", { x, y, class: "num", "font-size": 62 * s }, $("nums")).textContent = txt;
+  });
+}
+
+/* ---------- Sky: background and colours follow the time of day ---------- */
+// [hour, top colour, bottom colour]; colours are blended between keyframes
+const SKY = [
+  [0,   "#050b1f", "#0c1a3d"], [5,  "#0b1633", "#1d3a6b"], [6.5, "#3a5f9a", "#8fb4dc"],
+  [9,   "#5ea8e8", "#b6dcf7"], [12, "#3d9be9", "#a8d8fb"], [15,  "#4aa3ea", "#b0dbf8"],
+  [17.5,"#3f6fb0", "#8db0d6"], [19, "#1f3a70", "#4a6fa8"], [21,  "#0d1a40", "#1a2f5e"],
+  [24,  "#050b1f", "#0c1a3d"]
+];
+const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+
+function applySky() {
+  const d = new Date();
+  const h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+  let i = 0;
+  while (i < SKY.length - 2 && h >= SKY[i + 1][0]) i++;
+  const [h0, t0, b0] = SKY[i], [h1, t1, b1] = SKY[i + 1];
+  const f = (h - h0) / (h1 - h0);
+  const top = mix(hex(t0), hex(t1), f), bot = mix(hex(b0), hex(b1), f);
+
+  // Perceived brightness: green counts most because the eye is most sensitive to it
+  const lum = (0.2126 * (top[0] + bot[0]) + 0.7152 * (top[1] + bot[1]) + 0.0722 * (top[2] + bot[2])) / 2 / 255;
+  const dark = lum < 0.42;                      // dark sky -> light foreground, and vice versa
+
+  const vars = {
+    "--bgt": `rgb(${top})`, "--bgb": `rgb(${bot})`,
+    "--hand": dark ? "#f2f7ff" : "#0a1c3a",
+    "--num": dark ? "#eaf2ff" : "#0a1c3a",
+    "--tick": dark ? "#a9c4ec" : "#1d4170",
+    "--tick2": dark ? "rgba(200, 220, 255, .3)" : "rgba(10, 28, 58, .35)",
+    "--pill": dark ? "rgba(255, 255, 255, .16)" : "#fff",
+    "--pill-text": dark ? "#f2f7ff" : "#0a1c3a",
+    "--hub": dark ? `rgb(${top})` : "#eaf4ff"
+  };
+  for (const k in vars) root.setProperty(k, vars[k]);
+}
+
+/* ---------- Clock: hand angles and date ---------- */
+const rotate = (g, deg) => g.setAttribute("transform", `translate(${cx} ${cy}) scale(${s}) rotate(${deg})`);
+
+function frame() {
+  const d = new Date();
+  const sec = d.getSeconds() + d.getMilliseconds() / 1000;   // fractional -> smooth sweep
+  const min = d.getMinutes() + sec / 60;
+  const hr = (d.getHours() % 12) + min / 60;
+  rotate($("sh"), sec * 6);     // 360 / 60 = 6 degrees per second
+  rotate($("mh"), min * 6);     // 6 degrees per minute
+  rotate($("hh"), hr * 30);     // 360 / 12 = 30 degrees per hour
+  requestAnimationFrame(frame);
+}
+
+function updateDate() {
+  const d = new Date();
+  $("date").textContent = d.toLocaleDateString("en-US", { weekday: "long" }) + ", " +
+    d.getDate() + " " + d.toLocaleDateString("en-US", { month: "long" });
+}
+
+addEventListener("resize", layout);
+layout(); applySky(); updateDate();
+setInterval(applySky, 5000);
+setInterval(updateDate, 60000);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
